@@ -1,0 +1,16 @@
+# Build output
+/kafka-desktop.exe
+*.exe
+*.syso
+.claude/
+# Go
+/vendor/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Local scratch
+tidy_err.txt

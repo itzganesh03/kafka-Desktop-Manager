@@ -1,0 +1,183 @@
+==============================================================================
+ One Way Kafka Manager  —  REQUIREMENTS & BUILD GUIDE
+ (How to move this codebase to another Windows laptop and build the .exe)
+==============================================================================
+
+>>> FASTEST PATH: right-click  setup-and-build.bat  -> "Run as administrator".
+>>> It installs Go + gcc (+ a JDK), then builds kafka-desktop.exe for you.
+>>> The manual steps below explain what that script does, in case you prefer
+>>> to run them by hand or something fails.
+
+This is a Go + Fyne (CGO) Windows desktop app. Fyne needs a C compiler, so the
+build machine needs a bit more than just Go. Two audiences are covered below:
+
+  A) BUILD machine  -> needs Go + C compiler (to produce kafka-desktop.exe)
+  B) RUN machine    -> needs almost nothing (the .exe is self-contained), but
+                       Kafka itself needs Java to actually start.
+
+Project module name : kafkadesktop
+Tested with         : Go 1.24.5 (windows/amd64)
+                      Fyne v2.7.4
+                      mingw-w64 UCRT gcc 16.1.0 (from MSYS2)
+Target OS           : Windows 10 / 11 (64-bit)
+
+
+------------------------------------------------------------------------------
+0) WHAT TO COPY TO THE NEW LAPTOP
+------------------------------------------------------------------------------
+Copy the entire project folder. The important parts:
+
+    main.go
+    go.mod, go.sum
+    internal/                (config, kafka, ui packages)
+    tools/genicon/           (icon generator)
+    icon.ico                 (source icon for the exe resource)
+    icon_windows.syso        (compiled exe-icon resource; can be regenerated)
+    internal/ui/icon.png     (window/splash icon; can be regenerated)
+    README.md
+    REQUIREMENTS.txt         (this file)
+
+You do NOT need to copy:
+    kafka-desktop.exe        (you will rebuild it)
+    Go build cache / module cache (Go re-downloads as needed)
+
+NOTE: You do NOT copy your Kafka installation with the code. Kafka is configured
+      at runtime by pointing the app's setup wizard at the Kafka folder on the
+      new machine (e.g. C:\kafka).
+
+
+==============================================================================
+ A) BUILD MACHINE  —  prerequisites to compile the .exe
+==============================================================================
+
+1. GO  (1.24+)
+   Download: https://go.dev/dl/  (the windows/amd64 .msi)
+   Verify:
+       go version
+
+2. C COMPILER for CGO  (mingw-w64, UCRT flavor) — REQUIRED for Fyne
+   Easiest via MSYS2:
+       winget install -e --id MSYS2.MSYS2
+       C:\msys64\usr\bin\pacman.exe -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-gcc
+   This installs gcc at:
+       C:\msys64\ucrt64\bin\gcc.exe
+   Verify (after adding to PATH, see step 4):
+       gcc --version
+
+   (Alternatives that also work: TDM-GCC, or WinLibs mingw-w64. Any 64-bit
+    mingw-w64 gcc on PATH is fine. MSVC alone will NOT work for Fyne.)
+
+3. INTERNET ACCESS (first build only)
+   The first build downloads Go module dependencies (Fyne, etc.) from the Go
+   proxy. If you are behind a corporate proxy/firewall and downloads fail with
+   "connection forcibly closed", just re-run the command (it resumes), or set
+   an internal mirror, e.g.:
+       go env -w GOPROXY=https://your-internal-goproxy,direct
+
+4. ENVIRONMENT (tell Go to use the C compiler)
+   PowerShell (per session) OR set permanently with `go env -w`:
+
+       # one-time, persisted:
+       go env -w CGO_ENABLED=1
+       go env -w CC=C:\msys64\ucrt64\bin\gcc.exe
+
+       # and add the compiler to PATH for the build (PowerShell, per session):
+       $env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+
+   Verify:
+       go env CGO_ENABLED      # -> 1
+       go env CC               # -> C:\msys64\ucrt64\bin\gcc.exe
+
+
+------------------------------------------------------------------------------
+ BUILD STEPS  (run from the project root, e.g. C:\Phoenix\Kafka)
+------------------------------------------------------------------------------
+
+# (PowerShell) make sure gcc is on PATH for this session:
+$env:PATH = "C:\msys64\ucrt64\bin;$env:PATH"
+$env:CGO_ENABLED = "1"
+
+# 1. Download dependencies (first time / when go.mod changes)
+go mod download
+#   (if it errors on a flaky network, just run it again)
+
+# 2. (Optional) Regenerate the icon assets. Only needed if you changed the
+#    icon or the .syso/png are missing. They are already in the repo.
+go run ./tools/genicon
+go run github.com/akavel/rsrc@latest -ico icon.ico -arch amd64 -o icon_windows.syso
+
+# 3. Build the GUI executable (no console window, embedded icon)
+go build -ldflags="-H windowsgui" -o kafka-desktop.exe .
+
+#   IMPORTANT FLAGS:
+#     -ldflags="-H windowsgui"   -> GUI app, so NO black console window opens
+#     icon_windows.syso present  -> exe gets the One Way Kafka Manager icon
+#   The FIRST build is slow (3-6 min) because Fyne's C deps (GLFW/OpenGL) are
+#   compiled once. Later builds are cached and fast.
+
+# 4. Run
+.\kafka-desktop.exe
+
+
+------------------------------------------------------------------------------
+ ONE-LINER (after prerequisites are installed)
+------------------------------------------------------------------------------
+PowerShell:
+   $env:PATH="C:\msys64\ucrt64\bin;$env:PATH"; $env:CGO_ENABLED="1"; go build -ldflags="-H windowsgui" -o kafka-desktop.exe .
+
+
+==============================================================================
+ B) RUN MACHINE  —  what an end user needs to just run the .exe
+==============================================================================
+
+The built kafka-desktop.exe is self-contained on Windows 10/11:
+  - NO Go install needed
+  - NO mingw/gcc needed
+  - NO Visual C++ Redistributable needed
+  - NO extra DLLs to copy
+  (It only links Windows system DLLs + the Universal C Runtime, which ships
+   with Windows 10/11, + OpenGL which is part of Windows.)
+
+BUT to actually use Kafka through the app, the run machine still needs:
+  1. A Kafka installation folder containing bin\windows\*.bat
+     (the classic ZooKeeper-based Apache Kafka distribution).
+     Point the app's setup wizard at this folder on first launch.
+  2. JAVA (JRE/JDK) installed and on PATH (or JAVA_HOME set).
+     Kafka's .bat scripts launch java.exe — without Java, ZooKeeper/Kafka
+     will not start (you'd see "java is not recognized" in the log console).
+     Install a JDK, e.g.:  https://adoptium.net  (Temurin 17 or 21)
+     Verify:  java -version
+
+App configuration is saved per-user at:
+     %APPDATA%\KafkaDesktopManager\config.json
+
+
+==============================================================================
+ TROUBLESHOOTING
+==============================================================================
+* "cgo: C compiler not found" / "exit status 2" on build
+    -> gcc not on PATH or CGO_ENABLED=0. Redo step A.4. Also do NOT run two
+       `go build`/`go run` of this project at the same time (they collide on
+       the build cache).
+
+* "missing go.sum entry" or download errors
+    -> network blip. Re-run `go mod download` (it resumes).
+
+* A console/cmd window appears when launching the exe
+    -> you built without -ldflags="-H windowsgui". Rebuild with it.
+
+* Exe has the default Go icon (not the arrow logo)
+    -> icon_windows.syso missing at build time. Regenerate it (step A.2 / B.3)
+       and rebuild. Windows Explorer may also cache the old icon briefly.
+
+* App window opens too big / Close button off-screen on a scaled display
+    -> already handled (default 1024x640 DIP). If still large, lower display
+       scaling or resize the window; it is freely resizable.
+
+* UI/icons render huge on some launches, normal on others
+    -> The app pins FYNE_SCALE=1 at startup for consistent rendering. If you
+       WANT it bigger/smaller, set the env var before launching, e.g.:
+           $env:FYNE_SCALE = "1.25"   # 25% larger
+           .\kafka-desktop.exe
+       (A user-set FYNE_SCALE always overrides the built-in default.)
+==============================================================================
