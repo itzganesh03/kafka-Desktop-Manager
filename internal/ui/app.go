@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"net/url"
 	"os"
 	"sync"
 
@@ -135,7 +136,7 @@ func (u *AppUI) buildShell() fyne.CanvasObject {
 	}
 
 	title := widget.NewLabelWithStyle("  Kafka Manager", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	side := container.NewBorder(title, nil, nil, nil, u.nav)
+	side := container.NewBorder(title, u.sidebarFooter(), nil, nil, u.nav)
 
 	u.content = container.NewStack(widget.NewLabel("Loading..."))
 
@@ -227,6 +228,24 @@ func (u *AppUI) refreshCurrent() {
 			return
 		}
 	}
+}
+
+// sidebarFooter builds the "Developed by" credit pinned to the bottom of the
+// navigation sidebar, with a clickable GitHub link.
+func (u *AppUI) sidebarFooter() fyne.CanvasObject {
+	credit := widget.NewLabelWithStyle("Developed by Ganesh Modi",
+		fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
+
+	ghURL, _ := url.Parse("https://github.com/itzganesh03")
+	link := widget.NewHyperlink("github.com/itzganesh03", ghURL)
+	link.Alignment = fyne.TextAlignCenter
+
+	return container.NewVBox(
+		widget.NewSeparator(),
+		credit,
+		container.NewCenter(link),
+		widget.NewLabel(""),
+	)
 }
 
 // maybeAutoStart launches services if configured to do so.

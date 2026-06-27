@@ -15,14 +15,25 @@ import (
 
 // maxConsoleLines caps how many log lines are rendered in a console at once
 // (the full buffer is still kept in the Service for export).
-const maxConsoleLines = 600
+const (
+	maxConsoleLines = 600
+	maxConsoleChars = 150000
+)
 
 // buildServices builds the service control + live logs page.
 func (u *AppUI) buildServices() fyne.CanvasObject {
 	zkPanel, zkFlush := u.servicePanel(u.mgr.ZooKeeper)
 	brokerPanel, brokerFlush := u.servicePanel(u.mgr.Broker)
 
-	header := container.NewVBox(sectionTitle("Services & Logs", theme.MediaPlayIcon()), widget.NewSeparator())
+	metaBtn := widget.NewButtonWithIcon("Metadata Delete", theme.DeleteIcon(), func() {
+		u.runMetadataDelete()
+	})
+	metaBtn.Importance = widget.DangerImportance
+	hint := widget.NewLabel("Broker won't start? Stop services and clear Kafka logs/metadata:")
+	headerRow := container.NewBorder(nil, nil,
+		sectionTitle("Services & Logs", theme.MediaPlayIcon()),
+		container.NewHBox(hint, metaBtn))
+	header := container.NewVBox(headerRow, widget.NewSeparator())
 	body := container.NewGridWithColumns(2, zkPanel, brokerPanel)
 	page := container.NewBorder(header, nil, nil, nil, body)
 
@@ -55,6 +66,11 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 		autoFollow = true
 	)
 
+	// Broker init-failure tracking (used to suggest "Metadata Delete").
+	isBroker := svc.Name == "Kafka Broker"
+	var started, reached, userStop bool
+	fails := 0
+
 	// flush re-renders the console from the (capped) service buffer if changed.
 	flush := func() {
 		mu.Lock()
@@ -71,6 +87,10 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 			lines = lines[len(lines)-maxConsoleLines:]
 		}
 		text := strings.Join(lines, "\n")
+		// Hard char cap keeps the text widget responsive with very long lines.
+		if len(text) > maxConsoleChars {
+			text = "…\n" + text[len(text)-maxConsoleChars:]
+		}
 		if text == logView.Text {
 			return
 		}
@@ -116,6 +136,7 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 		}()
 	}
 	stopBtn.OnTapped = func() {
+		userStop = true // intentional stop must not count as an init failure
 		go func() {
 			if err := svc.Stop(); err != nil {
 				fyne.Do(func() { u.errorDialog(err) })
@@ -123,6 +144,7 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 		}()
 	}
 	restartBtn.OnTapped = func() {
+		userStop = true
 		go func() {
 			if err := svc.Restart(); err != nil {
 				fyne.Do(func() { u.errorDialog(err) })
@@ -131,6 +153,26 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 	}
 
 	applyState := func(st kafka.State) {
+		// Track broker start attempts: a transition to Stopped after Starting
+		// without ever reaching Running (and not a user-initiated stop) means
+		// the broker failed to initialize.
+		if isBroker {
+			switch st {
+			case kafka.StateStarting:
+				started, reached = true, false
+			case kafka.StateRunning:
+				reached = true
+				fails = 0
+			case kafka.StateStopped:
+				if started && !reached && !userStop {
+					fails++
+					if fails >= 2 {
+						fyne.Do(func() { u.suggestMetadataDelete() })
+					}
+				}
+				started, userStop = false, false
+			}
+		}
 		fyne.Do(func() {
 			dot.FillColor = stateColor(st)
 			dot.Refresh()

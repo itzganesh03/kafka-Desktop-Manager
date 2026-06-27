@@ -37,12 +37,47 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 	zkPort := widget.NewEntry()
 	zkPort.SetText(u.cfg.ZookeeperPort)
 
+	// Folder selectors used by the "Metadata Delete" recovery action.
+	dataLogEntry := widget.NewEntry()
+	dataLogEntry.SetPlaceHolder(`C:\kafka\kafka-logs`)
+	if u.cfg.DataLogDir != "" {
+		dataLogEntry.SetText(u.cfg.DataLogDir)
+	} else {
+		dataLogEntry.SetText(config.DetectDataLogDir(u.cfg.KafkaPath))
+	}
+	appLogEntry := widget.NewEntry()
+	appLogEntry.SetPlaceHolder(`C:\kafka\logs`)
+	if u.cfg.AppLogDir != "" {
+		appLogEntry.SetText(u.cfg.AppLogDir)
+	} else {
+		appLogEntry.SetText(config.DefaultAppLogDir(u.cfg.KafkaPath))
+	}
+	browseInto := func(target *widget.Entry) *widget.Button {
+		return widget.NewButtonWithIcon("Browse", theme.FolderOpenIcon(), func() {
+			dlg := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+				if err != nil || uri == nil {
+					return
+				}
+				target.SetText(uri.Path())
+			}, u.win)
+			dlg.Show()
+		})
+	}
+
 	status := widget.NewRichTextWithText("")
 	status.Wrapping = fyne.TextWrapWord
 
 	validateBtn := widget.NewButtonWithIcon("Validate", theme.ConfirmIcon(), func() {
-		missing := config.ValidateKafkaPath(strings.TrimSpace(pathEntry.Text))
+		path := strings.TrimSpace(pathEntry.Text)
+		missing := config.ValidateKafkaPath(path)
 		if len(missing) == 0 {
+			// auto-fill the metadata folders from this install if still empty
+			if strings.TrimSpace(dataLogEntry.Text) == "" {
+				dataLogEntry.SetText(config.DetectDataLogDir(path))
+			}
+			if strings.TrimSpace(appLogEntry.Text) == "" {
+				appLogEntry.SetText(config.DefaultAppLogDir(path))
+			}
 			status.ParseMarkdown("✅ **Valid Kafka installation found.** You can finish setup.")
 		} else {
 			status.ParseMarkdown("❌ **Missing required files:**\n\n- " + strings.Join(missing, "\n- "))
@@ -60,6 +95,8 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 		u.cfg.KafkaPath = path
 		u.cfg.BootstrapServer = strings.TrimSpace(bootstrap.Text)
 		u.cfg.ZookeeperPort = strings.TrimSpace(zkPort.Text)
+		u.cfg.DataLogDir = strings.TrimSpace(dataLogEntry.Text)
+		u.cfg.AppLogDir = strings.TrimSpace(appLogEntry.Text)
 		if err := u.cfg.Save(); err != nil {
 			dialog.ShowError(err, u.win)
 			return
@@ -74,6 +111,8 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 		widget.NewFormItem("Kafka Directory", container.NewBorder(nil, nil, nil, browse, pathEntry)),
 		widget.NewFormItem("Bootstrap Server", bootstrap),
 		widget.NewFormItem("ZooKeeper Port", zkPort),
+		widget.NewFormItem("Data Log Folder", container.NewBorder(nil, nil, nil, browseInto(dataLogEntry), dataLogEntry)),
+		widget.NewFormItem("Log Folder", container.NewBorder(nil, nil, nil, browseInto(appLogEntry), appLogEntry)),
 	)
 
 	hint := widget.NewRichTextFromMarkdown(
@@ -81,7 +120,10 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 			"- `bin\\windows\\zookeeper-server-start.bat`\n" +
 			"- `bin\\windows\\kafka-server-start.bat`\n" +
 			"- `config\\zookeeper.properties`\n" +
-			"- `config\\server.properties`")
+			"- `config\\server.properties`\n\n" +
+			"**Data Log Folder** = Kafka `log.dirs` (partition data, e.g. `kafka-logs`).\n" +
+			"**Log Folder** = where `server.log`/`zookeeper` logs are written (`logs`).\n" +
+			"These are cleared by *Metadata Delete* when the broker won't start.")
 
 	body := container.NewVBox(
 		heading, sub, widget.NewSeparator(),

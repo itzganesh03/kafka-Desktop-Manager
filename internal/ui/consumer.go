@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -14,10 +16,16 @@ import (
 	"kafkadesktop/internal/kafka"
 )
 
-// caps for the consumer view.
+// caps for the consumer view. These keep the Fyne text widget responsive: it
+// becomes very slow with large text, so we bound both how many messages and how
+// many characters are rendered at once. The full payloads stay in the buffer
+// for Copy/Export.
 const (
-	maxConsumerBuffer = 5000 // messages retained in memory
-	maxConsumerShown  = 800  // lines rendered at once
+	maxConsumerBuffer    = 5000   // messages retained in memory
+	maxConsumerShown     = 250    // most-recent messages considered for display
+	maxDisplayLineLen    = 2000   // per-message display cap (chars)
+	maxTotalDisplayChars = 120000 // total rendered text cap (chars)
+	maxPrettyLen         = 20000  // only pretty-print JSON below this size
 )
 
 // buildConsumer builds the consumer page.
@@ -77,22 +85,29 @@ func (u *AppUI) buildConsumer() fyne.CanvasObject {
 		if len(messages) > maxConsumerShown {
 			start = len(messages) - maxConsumerShown
 		}
-		var b strings.Builder
-		for _, m := range messages[start:] {
+		window := messages[start:]
+		// Build newest-first so the total-char cap keeps the most recent
+		// messages, then reverse for display.
+		var parts []string
+		size := 0
+		for i := len(window) - 1; i >= 0; i-- {
+			m := window[i]
 			if q != "" && !strings.Contains(strings.ToLower(m), q) {
 				continue
 			}
-			if pp {
-				if formatted, ok := tryFormatJSON(m); ok {
-					b.WriteString(formatted)
-					b.WriteString("\n\n") // blank line between JSON records
-					continue
-				}
+			disp := sanitizeMessage(m, pp)
+			if size+len(disp) > maxTotalDisplayChars {
+				parts = append(parts, "… (older messages hidden — use Export for the full log)")
+				break
 			}
-			b.WriteString(m)
-			b.WriteByte('\n')
+			size += len(disp)
+			parts = append(parts, disp)
 		}
-		text := b.String()
+		// reverse
+		for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+			parts[i], parts[j] = parts[j], parts[i]
+		}
+		text := strings.Join(parts, "\n")
 		mu.Unlock()
 
 		if text == output.Text {
@@ -253,4 +268,45 @@ func plural(n int, word string) string {
 		return "1 " + word
 	}
 	return strconv.Itoa(n) + " " + word + "s"
+}
+
+// sanitizeMessage prepares a single record for display: pretty-prints small
+// JSON, renders binary payloads as a short hex preview (so the UI never tries
+// to lay out megabytes of garbage), and truncates over-long text.
+func sanitizeMessage(m string, pretty bool) string {
+	if isBinaryString(m) {
+		preview := hex.EncodeToString([]byte(m))
+		if len(preview) > 64 {
+			preview = preview[:64]
+		}
+		return "[binary/non-text • " + strconv.Itoa(len(m)) + " bytes] " + preview + "…"
+	}
+	if pretty && len(m) <= maxPrettyLen {
+		if formatted, ok := tryFormatJSON(m); ok {
+			m = formatted + "\n"
+		}
+	}
+	if len(m) > maxDisplayLineLen {
+		return m[:maxDisplayLineLen] + "… (truncated — use Export for full)"
+	}
+	return m
+}
+
+// isBinaryString reports whether s looks like non-text/binary data: invalid
+// UTF-8, or more than ~5% control/replacement characters.
+func isBinaryString(s string) bool {
+	if !utf8.ValidString(s) {
+		return true
+	}
+	nonPrint, total := 0, 0
+	for _, r := range s {
+		total++
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 || r == 0xFFFD {
+			nonPrint++
+		}
+	}
+	return total > 0 && nonPrint*20 > total
 }

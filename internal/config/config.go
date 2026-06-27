@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config is the persisted application configuration.
@@ -18,6 +19,13 @@ type Config struct {
 	AutoStartZK     bool   `json:"auto_start_zookeeper"`
 	AutoStartKafka  bool   `json:"auto_start_kafka"`
 	Theme           string `json:"theme"` // "dark" or "light"
+
+	// DataLogDir is Kafka's log.dirs (where partition data lives, e.g.
+	// C:\kafka\kafka-logs). AppLogDir is where server/zk .log files are written
+	// (e.g. C:\kafka\logs). Both are cleared by the "Metadata Delete" recovery
+	// action. Their names vary per install, so the user picks them during setup.
+	DataLogDir string `json:"data_log_dir"`
+	AppLogDir  string `json:"app_log_dir"`
 }
 
 // Default returns a Config populated with sensible defaults.
@@ -54,6 +62,76 @@ func ValidateKafkaPath(root string) []string {
 		}
 	}
 	return missing
+}
+
+// DetectDataLogDir determines Kafka's data-log directory. It first reads
+// log.dirs from <kafkaPath>\config\server.properties; if that path exists on
+// disk it is used. Otherwise it scans kafkaPath for a likely data-log folder
+// (e.g. "kafka-logs", "kafkakafka-logs") so installs with a non-standard name
+// are still found. Returns "" if nothing plausible is found.
+func DetectDataLogDir(kafkaPath string) string {
+	configured := parseLogDirs(kafkaPath)
+	if configured != "" {
+		if _, err := os.Stat(configured); err == nil {
+			return configured
+		}
+	}
+	// Fall back to scanning for a "*log*" directory under kafkaPath.
+	if entries, err := os.ReadDir(kafkaPath); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := strings.ToLower(e.Name())
+			if name == "logs" { // that's the app-log dir, not data
+				continue
+			}
+			if strings.Contains(name, "log") {
+				return filepath.Join(kafkaPath, e.Name())
+			}
+		}
+	}
+	return configured // may be "" or a non-existent configured path
+}
+
+// parseLogDirs returns the first log.dirs entry from server.properties,
+// resolved against kafkaPath if relative.
+func parseLogDirs(kafkaPath string) string {
+	data, err := os.ReadFile(filepath.Join(kafkaPath, "config", "server.properties"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "log.dirs") && !strings.HasPrefix(line, "log.dir") {
+			continue
+		}
+		_, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(val)
+		if val == "" {
+			continue
+		}
+		if c := strings.Index(val, ","); c >= 0 {
+			val = val[:c]
+		}
+		val = filepath.FromSlash(strings.TrimSpace(val))
+		if !filepath.IsAbs(val) {
+			val = filepath.Join(kafkaPath, val)
+		}
+		return filepath.Clean(val)
+	}
+	return ""
+}
+
+// DefaultAppLogDir returns the conventional Kafka application log dir.
+func DefaultAppLogDir(kafkaPath string) string {
+	return filepath.Join(kafkaPath, "logs")
 }
 
 // configDir returns %APPDATA%\KafkaDesktopManager (falling back to the user

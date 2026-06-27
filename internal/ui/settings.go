@@ -35,6 +35,32 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 	defaultTopic := widget.NewEntry()
 	defaultTopic.SetText(u.cfg.DefaultTopic)
 
+	dataLog := widget.NewEntry()
+	if u.cfg.DataLogDir != "" {
+		dataLog.SetText(u.cfg.DataLogDir)
+	} else {
+		dataLog.SetText(config.DetectDataLogDir(u.cfg.KafkaPath))
+	}
+	dataLog.SetPlaceHolder(`C:\kafka\kafka-logs`)
+	appLog := widget.NewEntry()
+	if u.cfg.AppLogDir != "" {
+		appLog.SetText(u.cfg.AppLogDir)
+	} else {
+		appLog.SetText(config.DefaultAppLogDir(u.cfg.KafkaPath))
+	}
+	appLog.SetPlaceHolder(`C:\kafka\logs`)
+	browseInto := func(target *widget.Entry) *widget.Button {
+		return widget.NewButtonWithIcon("Browse", theme.FolderOpenIcon(), func() {
+			dlg := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+				if err != nil || uri == nil {
+					return
+				}
+				target.SetText(uri.Path())
+			}, u.win)
+			dlg.Show()
+		})
+	}
+
 	autoZK := widget.NewCheck("Auto-start ZooKeeper on launch", nil)
 	autoZK.SetChecked(u.cfg.AutoStartZK)
 	autoKafka := widget.NewCheck("Auto-start Kafka broker on launch", nil)
@@ -52,6 +78,8 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 		widget.NewFormItem("Bootstrap Server", bootstrap),
 		widget.NewFormItem("ZooKeeper Port", zkPort),
 		widget.NewFormItem("Default Topic", defaultTopic),
+		widget.NewFormItem("Data Log Folder", container.NewBorder(nil, nil, nil, browseInto(dataLog), dataLog)),
+		widget.NewFormItem("Log Folder", container.NewBorder(nil, nil, nil, browseInto(appLog), appLog)),
 		widget.NewFormItem("Theme", themeSelect),
 		widget.NewFormItem("", autoZK),
 		widget.NewFormItem("", autoKafka),
@@ -68,6 +96,8 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 		u.cfg.BootstrapServer = strings.TrimSpace(bootstrap.Text)
 		u.cfg.ZookeeperPort = strings.TrimSpace(zkPort.Text)
 		u.cfg.DefaultTopic = strings.TrimSpace(defaultTopic.Text)
+		u.cfg.DataLogDir = strings.TrimSpace(dataLog.Text)
+		u.cfg.AppLogDir = strings.TrimSpace(appLog.Text)
 		u.cfg.AutoStartZK = autoZK.Checked
 		u.cfg.AutoStartKafka = autoKafka.Checked
 		u.cfg.Theme = themeSelect.Selected
