@@ -53,7 +53,7 @@ func Run() {
 		_ = os.Setenv("FYNE_SCALE", "1")
 	}
 
-	a := app.NewWithID("com.phoenix.kafkadesktop")
+	a := app.NewWithID("github.com/itzganesh03")
 	a.SetIcon(appIcon)
 
 	cfg, _ := config.Load()
