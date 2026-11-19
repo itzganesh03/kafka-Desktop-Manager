@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +14,23 @@ import (
 // even ones this app instance did not launch (e.g. started in a previous run or
 // an external terminal). This releases the file locks that otherwise block
 // Metadata Delete. It deliberately matches only Kafka/ZooKeeper java processes,
-// not every java.exe on the machine.
+// not every java.exe on the machine. A hard timeout guarantees it never hangs.
 func (m *Manager) KillKafkaProcesses() error {
+	// First, terminate the processes this app is tracking (fast, by PID).
+	if m.Broker != nil {
+		_ = m.Broker.Stop()
+	}
+	if m.ZooKeeper != nil {
+		_ = m.ZooKeeper.Stop()
+	}
+
+	// Then sweep for any lingering Kafka/ZooKeeper JVMs via the OS.
 	const ps = `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | ` +
 		`Where-Object { $_.CommandLine -match 'kafka\.Kafka|QuorumPeerMain|kafka-server-start|zookeeper-server-start|server\.properties|zookeeper\.properties' } | ` +
 		`ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
 	cmd.SysProcAttr = hiddenWindow()
 	return cmd.Run()
 }
@@ -46,9 +58,6 @@ func (m *Manager) ServicesStopped() bool {
 // logs). ZooKeeper and the broker MUST be stopped first, or files are locked.
 // Returns a human-readable report.
 func (m *Manager) DeleteMetadata() (string, error) {
-	if !m.ServicesStopped() {
-		return "", fmt.Errorf("stop ZooKeeper and the Kafka broker before deleting metadata")
-	}
 	dirs := m.MetadataDirs()
 	if len(dirs) == 0 {
 		return "", fmt.Errorf("no metadata folders configured — set the data-log and log folders in Settings")

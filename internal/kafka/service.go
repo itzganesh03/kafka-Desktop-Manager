@@ -56,14 +56,18 @@ type Service struct {
 }
 
 func newService(name string, m *Manager) *Service {
-	s := &Service{Name: name, mgr: m, state: StateStopped}
+	return &Service{Name: name, mgr: m, state: StateStopped, readyMarker: localReadyMarker(name)}
+}
+
+// localReadyMarker is the log text that means a locally-launched service is up.
+func localReadyMarker(name string) string {
 	switch name {
 	case "ZooKeeper":
-		s.readyMarker = "binding to port"
+		return "binding to port"
 	case "Kafka Broker":
-		s.readyMarker = "started (kafka.server.kafkaserver)"
+		return "started (kafka.server.kafkaserver)"
 	}
-	return s
+	return ""
 }
 
 // State returns the current service state.
@@ -93,6 +97,15 @@ func (s *Service) SubscribeState(fn func(State)) {
 func (s *Service) SubscribeLogs(fn func(line string)) {
 	s.mu.Lock()
 	s.logSubs = append(s.logSubs, fn)
+	s.mu.Unlock()
+}
+
+// ClearSubscribers drops all state/log callbacks (used when the UI is rebuilt,
+// e.g. after switching between local and Docker mode).
+func (s *Service) ClearSubscribers() {
+	s.mu.Lock()
+	s.stateSubs = nil
+	s.logSubs = nil
 	s.mu.Unlock()
 }
 
@@ -162,6 +175,9 @@ func (s *Service) command() (*exec.Cmd, error) {
 
 // Start launches the service if it is not already running.
 func (s *Service) Start() error {
+	if s.mgr.IsDocker() {
+		return s.startDocker()
+	}
 	s.mu.RLock()
 	st := s.state
 	s.mu.RUnlock()
@@ -176,6 +192,7 @@ func (s *Service) Start() error {
 
 	s.mu.Lock()
 	s.readyHit = false
+	s.readyMarker = localReadyMarker(s.Name)
 	s.cmd = cmd
 	s.mu.Unlock()
 
@@ -223,6 +240,9 @@ func (s *Service) pump(r io.Reader) {
 
 // Stop terminates the service process tree.
 func (s *Service) Stop() error {
+	if s.mgr.IsDocker() {
+		return s.stopDocker()
+	}
 	s.mu.Lock()
 	cmd := s.cmd
 	s.mu.Unlock()

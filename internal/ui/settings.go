@@ -63,15 +63,19 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 
 	autoZK := widget.NewCheck("Auto-start ZooKeeper on launch", nil)
 	autoZK.SetChecked(u.cfg.AutoStartZK)
-	autoKafka := widget.NewCheck("Auto-start Kafka broker on launch", nil)
+	autoKafka := widget.NewCheck("Auto-start Kafka broker on launch (Docker mode: the container)", nil)
 	autoKafka.SetChecked(u.cfg.AutoStartKafka)
 
 	themeSelect := widget.NewSelect([]string{"dark", "light"}, nil)
-	if u.cfg.Theme == "" {
-		themeSelect.SetSelected("dark")
-	} else {
-		themeSelect.SetSelected(u.cfg.Theme)
-	}
+	// Re-synced on every theme switch so the top-bar toggle and this select
+	// never disagree (a stale value here would revert the theme on Save).
+	paint(func() {
+		if u.cfg.Theme == "" {
+			themeSelect.SetSelected("dark")
+		} else {
+			themeSelect.SetSelected(u.cfg.Theme)
+		}
+	})
 
 	form := widget.NewForm(
 		widget.NewFormItem("Kafka Path", container.NewBorder(nil, nil, nil, browse, pathEntry)),
@@ -87,7 +91,8 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 
 	saveBtn := widget.NewButtonWithIcon("Save Settings", theme.DocumentSaveIcon(), func() {
 		path := strings.TrimSpace(pathEntry.Text)
-		if missing := config.ValidateKafkaPath(path); len(missing) > 0 {
+		// The local install is only required in local mode.
+		if missing := config.ValidateKafkaPath(path); len(missing) > 0 && !u.cfg.IsDocker() {
 			u.errorDialog(errMissing(missing))
 			return
 		}
@@ -108,7 +113,7 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 		u.mgr.SetConfig(u.cfg)
 		u.toast("Settings saved")
 		if themeChanged {
-			u.reloadShell()
+			u.setTheme(u.cfg.Theme)
 		}
 	})
 	saveBtn.Importance = widget.HighImportance
@@ -123,6 +128,7 @@ func (u *AppUI) buildSettings() fyne.CanvasObject {
 	body := container.NewVBox(
 		sectionTitle("Settings", theme.SettingsIcon()),
 		widget.NewSeparator(),
+		u.dockerSettingsCard(),
 		card("Kafka Configuration", form),
 		container.NewHBox(saveBtn),
 		widget.NewSeparator(),

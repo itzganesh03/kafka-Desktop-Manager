@@ -27,6 +27,16 @@ Desktop or MongoDB Compass.
   re-run with one click.
 - **Settings** — Kafka path, bootstrap server, ZooKeeper port, default topic,
   auto-start toggles, theme (dark/light), open Kafka/log folders.
+- **Docker mode** — if Docker Desktop is installed, *Settings → Kafka Mode →
+  Install Kafka via Docker* sets up a single-node KRaft broker (no ZooKeeper):
+  it runs `docker version` / `docker compose version`, creates
+  `C:\kafka-docker`, writes `docker-compose.yml` (image `apache/kafka:4.4.0`),
+  then `docker compose pull` and `docker compose up -d`. In Docker mode every
+  page runs its tools inside the container, e.g.
+  `docker exec kafka /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server localhost:9092`.
+  Services → Start/Stop map to `docker compose up -d` / `docker compose stop`
+  with live `docker logs -f`; *Reset Docker Data* runs `docker compose down -v`.
+  Switch back any time with the *Local installation* option.
 - Dark theme, toast notifications, Windows notifications, keyboard shortcuts.
 
 ## Requirements
@@ -99,7 +109,10 @@ Example:
     "default_topic": "",
     "auto_start_zookeeper": false,
     "auto_start_kafka": false,
-    "theme": "dark"
+    "theme": "dark",
+    "mode": "local",
+    "docker_dir": "C:\\kafka-docker",
+    "docker_image": "apache/kafka:4.4.0"
 }
 ```
 
@@ -116,6 +129,7 @@ internal/
     producer.go              console producer
     consumer.go              streaming console consumer
     groups.go                consumer groups + offsets/lag
+    docker.go                Docker mode: detect, install, compose up/stop, docker exec
     utilities.go             purge/recreate/sample messages
     history.go               command history store
     util.go / proc_windows.go  helpers (process tree kill, hidden windows)
@@ -131,6 +145,7 @@ internal/
     groups.go                consumer groups page
     history.go               command history page
     settings.go              settings page
+    docker.go                Kafka Mode card + "Install Kafka via Docker" dialog
     helpers.go               cards, toasts, dialogs, export
 ```
 

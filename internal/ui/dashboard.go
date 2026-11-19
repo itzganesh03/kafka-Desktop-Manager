@@ -8,72 +8,69 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"kafkadesktop/internal/kafka"
 )
 
-// card sizing for the dashboard metric tiles.
-const (
-	cardW = 340
-	cardH = 120
-)
-
-// metricCard is a compact Grafana-style stat tile: a rounded panel with a
-// colored accent stripe, a title, a large value and an optional status dot.
+// metricCard is a glass stat tile: a tinted icon tile on the left, then a
+// small caption, a large value (with optional status dot) and a sub-line.
 type metricCard struct {
-	root   fyne.CanvasObject
-	stripe *canvas.Rectangle
-	value  *canvas.Text
-	sub    *canvas.Text
-	dot    *canvas.Circle
-	pulse  *fyne.Animation
+	root  fyne.CanvasObject
+	tile  *iconTile
+	value *canvas.Text
+	sub   *canvas.Text
+	dot   *canvas.Circle
+	pulse *fyne.Animation
 }
 
-func newMetricCard(title string, icon fyne.Resource, accent color.NRGBA, big, withDot bool) *metricCard {
-	bg := canvas.NewRectangle(color.NRGBA{R: 0x1a, G: 0x20, B: 0x29, A: 0xff})
-	bg.CornerRadius = 14
-	bg.StrokeColor = color.NRGBA{R: 0x2a, G: 0x32, B: 0x3d, A: 0xff}
-	bg.StrokeWidth = 1
+func newMetricCard(title string, icon fyne.Resource, accentName fyne.ThemeColorName, big, withDot bool) *metricCard {
+	tile := newIconTile(icon, accentName, 54)
 
-	stripe := canvas.NewRectangle(accent)
-	stripe.CornerRadius = 6
-	stripe.SetMinSize(fyne.NewSize(5, 10))
-
-	titleTxt := canvas.NewText(title, color.NRGBA{R: 0x8a, G: 0x92, B: 0x9c, A: 0xff})
+	titleTxt := themedText(title, true)
 	titleTxt.TextStyle = fyne.TextStyle{Bold: true}
-	titleTxt.TextSize = 12
+	titleTxt.TextSize = 11
 
-	var head fyne.CanvasObject = titleTxt
-	if icon != nil {
-		ic := widget.NewIcon(icon)
-		head = container.NewHBox(ic, titleTxt)
-	}
-
-	value := canvas.NewText("—", color.NRGBA{R: 0xe6, G: 0xed, B: 0xf3, A: 0xff})
+	value := canvas.NewText("—", pal.text)
 	value.TextStyle = fyne.TextStyle{Bold: true}
 	if big {
-		value.TextSize = 34
+		value.TextSize = 28
 	} else {
-		value.TextSize = 16
+		value.TextSize = 18
 	}
 
-	sub := canvas.NewText("", color.NRGBA{R: 0x7a, G: 0x84, B: 0x90, A: 0xff})
-	sub.TextSize = 12
+	sub := themedText("", true)
+	sub.TextSize = 11
 
-	mc := &metricCard{stripe: stripe, value: value, sub: sub}
+	mc := &metricCard{tile: tile, value: value, sub: sub}
+
+	// Values use either a text color (follow the theme) or a state color (keep).
+	paint(func() {
+		switch value.Color {
+		case color.Color(darkPalette.text), color.Color(lightPalette.text):
+			value.Color = pal.text
+		case color.Color(darkPalette.muted), color.Color(lightPalette.muted):
+			value.Color = pal.muted
+		}
+		value.Refresh()
+	})
 
 	var valueRow fyne.CanvasObject = value
 	if withDot {
-		mc.dot = canvas.NewCircle(color.NRGBA{R: 0xe0, G: 0x4f, B: 0x4f, A: 0xff})
-		dotWrap := container.NewGridWrap(fyne.NewSize(14, 14), mc.dot)
+		mc.dot = canvas.NewCircle(red)
+		dotWrap := container.NewGridWrap(fyne.NewSize(10, 10), mc.dot)
 		valueRow = container.NewHBox(container.NewCenter(dotWrap), value)
 	}
 
-	body := container.NewVBox(head, layoutSpacer(), valueRow, sub)
-	inner := container.NewBorder(nil, nil, stripe, nil, container.NewPadded(body))
-	mc.root = container.NewStack(bg, container.NewPadded(inner))
+	text := vCentered(container.NewVBox(titleTxt, valueRow, sub))
+	body := container.NewBorder(nil, nil,
+		container.New(layout.NewCustomPaddedLayout(0, 0, 0, 14), vCentered(tile.root)), nil, text)
+	minH := canvas.NewRectangle(color.Transparent)
+	minH.SetMinSize(fyne.NewSize(0, 78))
+	mc.root = glassPanel(container.New(layout.NewCustomPaddedLayout(2, 2, 4, 4),
+		container.NewStack(minH, body)))
 	return mc
 }
 
@@ -96,9 +93,8 @@ func (m *metricCard) setSub(s string) {
 	m.sub.Refresh()
 }
 
-func (m *metricCard) setAccent(c color.NRGBA) {
-	m.stripe.FillColor = c
-	m.stripe.Refresh()
+func (m *metricCard) setAccent(name fyne.ThemeColorName) {
+	m.tile.setAccent(name)
 }
 
 // startPulse animates the status dot gently between full and faded accent.
@@ -135,17 +131,21 @@ func (m *metricCard) stopPulse(static color.NRGBA) {
 
 // buildDashboard builds the live status dashboard.
 func (u *AppUI) buildDashboard() fyne.CanvasObject {
-	installCard := newMetricCard("KAFKA INSTALLATION", theme.FolderIcon(), accentTeal, false, false)
-	zkCard := newMetricCard("ZOOKEEPER", theme.StorageIcon(), red, false, true)
-	brokerCard := newMetricCard("KAFKA BROKER", theme.ComputerIcon(), red, false, true)
-	addrCard := newMetricCard("BROKER ADDRESS", theme.ComputerIcon(), accentBlue, false, false)
-	topicsCard := newMetricCard("TOPICS", theme.ListIcon(), accentPurple, true, false)
-	groupsCard := newMetricCard("CONSUMER GROUPS", theme.AccountIcon(), accentOrange, true, false)
+	installCard := newMetricCard("KAFKA INSTALLATION", theme.FolderIcon(), colorTeal, false, false)
+	zkCard := newMetricCard("ZOOKEEPER", theme.StorageIcon(), colorRed, false, true)
+	brokerCard := newMetricCard("KAFKA BROKER", theme.ComputerIcon(), colorRed, false, true)
+	addrCard := newMetricCard("BROKER ADDRESS", theme.MailSendIcon(), colorBlue, false, false)
+	topicsCard := newMetricCard("TOPICS", theme.ListIcon(), colorPurple, true, false)
+	groupsCard := newMetricCard("CONSUMER GROUPS", theme.AccountIcon(), colorOrange, true, false)
 
-	installCard.setValue(shortPath(u.cfg.KafkaPath), textPrimary)
+	if u.cfg.IsDocker() {
+		installCard.setValue("Docker · "+kafka.DockerContainer, textPrimary)
+	} else {
+		installCard.setValue(shortPath(u.cfg.KafkaPath), textPrimary)
+	}
 	addrCard.setValue(u.cfg.BootstrapServer, textPrimary)
 
-	grid := container.NewGridWrap(fyne.NewSize(cardW, cardH),
+	grid := container.NewGridWithColumns(3,
 		installCard.root, zkCard.root, brokerCard.root,
 		addrCard.root, topicsCard.root, groupsCard.root,
 	)
@@ -201,38 +201,48 @@ func (u *AppUI) buildDashboard() fyne.CanvasObject {
 		lagTable.SetColumnWidth(i, w)
 	}
 
+	// fetchLag runs the describe synchronously and applies the result. Used by
+	// the 1-second auto-refresh loop so calls never overlap.
+	fetchLag := func(group string) {
+		if group == "" {
+			return
+		}
+		rows, err := u.mgr.DescribeGroup(group)
+		fyne.Do(func() {
+			if err != nil {
+				totalLagLbl.Text = "error"
+				totalLagLbl.Color = red
+				totalLagLbl.Refresh()
+				return
+			}
+			var total int64
+			for _, r := range rows {
+				if r.Lag > 0 {
+					total += r.Lag
+				}
+			}
+			lagRows = rows
+			lagTable.Refresh()
+			totalLagLbl.Text = fmt.Sprintf("Total lag: %d", total)
+			if total > 0 {
+				totalLagLbl.Color = red
+			} else {
+				totalLagLbl.Color = green
+			}
+			totalLagLbl.Refresh()
+		})
+	}
+	// describeLag is the async wrapper for manual actions (select / button).
 	describeLag := func(group string) {
 		if group == "" {
 			return
 		}
-		go func() {
-			rows, err := u.mgr.DescribeGroup(group)
-			fyne.Do(func() {
-				if err != nil {
-					totalLagLbl.Text = "error"
-					totalLagLbl.Color = red
-					totalLagLbl.Refresh()
-					return
-				}
-				var total int64
-				for _, r := range rows {
-					if r.Lag > 0 {
-						total += r.Lag
-					}
-				}
-				lagRows = rows
-				lagTable.Refresh()
-				totalLagLbl.Text = fmt.Sprintf("Total lag: %d", total)
-				if total > 0 {
-					totalLagLbl.Color = red
-				} else {
-					totalLagLbl.Color = green
-				}
-				totalLagLbl.Refresh()
-			})
-		}()
+		go fetchLag(group)
 	}
 	groupSelect.OnChanged = describeLag
+
+	autoCheck := widget.NewCheck("Auto 1s", nil)
+	var autoStop chan struct{}
 
 	loadGroups := func() {
 		if u.mgr.Broker.State() != kafka.StateRunning {
@@ -256,7 +266,7 @@ func (u *AppUI) buildDashboard() fyne.CanvasObject {
 	})
 	lagControls := container.NewBorder(nil, nil,
 		container.NewHBox(widget.NewLabel("Consumer Group:"), lagRefreshBtn),
-		totalLagLbl, groupSelect)
+		container.NewHBox(autoCheck, totalLagLbl), groupSelect)
 	lagScroll := container.NewScroll(lagTable)
 	lagScroll.SetMinSize(fyne.NewSize(0, 220))
 	lagPanel := card("Consumer Group Lag", container.NewBorder(
@@ -266,7 +276,7 @@ func (u *AppUI) buildDashboard() fyne.CanvasObject {
 	applyService := func(c *metricCard, st kafka.State) {
 		col := stateColor(st)
 		fyne.Do(func() {
-			c.setAccent(col)
+			c.setAccent(stateAccent(st))
 			c.setValue(dashStateText(st), col)
 			if st == kafka.StateRunning || st == kafka.StateStarting {
 				c.startPulse(col)
@@ -278,10 +288,26 @@ func (u *AppUI) buildDashboard() fyne.CanvasObject {
 
 	// fastRefresh: in-memory service state only (no JVM spawned) — runs often.
 	fastRefresh := func() {
-		applyService(zkCard, u.mgr.ZooKeeper.State())
+		docker := u.cfg.IsDocker()
+		if docker {
+			fyne.Do(func() {
+				zkCard.setAccent(colorBlue)
+				zkCard.setValue("Not used", textMuted)
+				zkCard.setSub("KRaft mode (Docker)")
+				zkCard.stopPulse(accent(colorBlue))
+			})
+		} else {
+			applyService(zkCard, u.mgr.ZooKeeper.State())
+		}
 		applyService(brokerCard, u.mgr.Broker.State())
 		fyne.Do(func() {
-			installCard.setValue(shortPath(u.cfg.KafkaPath), textPrimary)
+			if docker {
+				installCard.setValue("Docker · "+kafka.DockerContainer, textPrimary)
+				installCard.setSub(u.cfg.DockerImageOrDefault())
+			} else {
+				installCard.setValue(shortPath(u.cfg.KafkaPath), textPrimary)
+				installCard.setSub("")
+			}
 			addrCard.setValue(u.cfg.BootstrapServer, textPrimary)
 		})
 	}
@@ -333,8 +359,42 @@ func (u *AppUI) buildDashboard() fyne.CanvasObject {
 		container.NewPadded(grid),
 		container.NewPadded(lagPanel),
 	)
-	page := container.NewBorder(container.NewVBox(header, widget.NewSeparator()), nil, nil, nil,
-		container.NewVScroll(content))
+	page := container.NewBorder(header, nil, nil, nil, container.NewVScroll(content))
+
+	// Auto-refresh the lag panel ~every second (like `watch -n1`). Runs the
+	// describe sequentially so JVM calls never overlap, and pauses while the
+	// dashboard isn't visible. Toggled by the "Auto 1s" checkbox.
+	autoCheck.OnChanged = func(on bool) {
+		if !on {
+			if autoStop != nil {
+				close(autoStop)
+				autoStop = nil
+			}
+			return
+		}
+		if autoStop != nil {
+			return // already running
+		}
+		autoStop = make(chan struct{})
+		stop := autoStop
+		go func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if g := groupSelect.Selected; g != "" && u.isPageVisible(page) {
+					fetchLag(g) // synchronous — no overlap
+				}
+				select {
+				case <-stop:
+					return
+				case <-time.After(1 * time.Second):
+				}
+			}
+		}()
+	}
 
 	// Two cadences: cheap state every 2s, expensive counts every 25s. Both are
 	// (re)started whenever the dashboard becomes visible and stop when hidden.
@@ -359,24 +419,23 @@ func shortPath(p string) string {
 	return p[:16] + "…" + p[len(p)-16:]
 }
 
-// accent palette
+// text colors for hand-drawn canvas text; applyTheme sets them from pal.
 var (
-	accentTeal   = color.NRGBA{R: 0x2e, G: 0xb8, B: 0xa6, A: 0xff}
-	accentBlue   = color.NRGBA{R: 0x3b, G: 0x8e, B: 0xea, A: 0xff}
-	accentPurple = color.NRGBA{R: 0x9b, G: 0x6d, B: 0xff, A: 0xff}
-	accentOrange = color.NRGBA{R: 0xe6, G: 0x8a, B: 0x2e, A: 0xff}
-	textPrimary  = color.NRGBA{R: 0xe6, G: 0xed, B: 0xf3, A: 0xff}
-	textMuted    = color.NRGBA{R: 0x7a, G: 0x84, B: 0x90, A: 0xff}
+	textPrimary = darkPalette.text
+	textMuted   = darkPalette.muted
 )
 
-func stateColor(s kafka.State) color.NRGBA {
+func stateColor(s kafka.State) color.NRGBA { return accent(stateAccent(s)) }
+
+// stateAccent maps a service state to its accent color name.
+func stateAccent(s kafka.State) fyne.ThemeColorName {
 	switch s {
 	case kafka.StateRunning:
-		return green
+		return colorGreen
 	case kafka.StateStarting, kafka.StateStopping:
-		return yellow
+		return colorYellow
 	default:
-		return red
+		return colorRed
 	}
 }
 
@@ -410,9 +469,9 @@ func stateText(s kafka.State) string {
 
 // status indicator colors
 var (
-	green  = color.NRGBA{R: 0x3f, G: 0xb9, B: 0x50, A: 0xff}
-	yellow = color.NRGBA{R: 0xe6, G: 0xb0, B: 0x3a, A: 0xff}
-	red    = color.NRGBA{R: 0xe0, G: 0x4f, B: 0x4f, A: 0xff}
+	green  = accentColors[colorGreen]
+	yellow = accentColors[colorYellow]
+	red    = accentColors[colorRed]
 )
 
 // startAutoRefresh runs fn every interval while the named page is the active

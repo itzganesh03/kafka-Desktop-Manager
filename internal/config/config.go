@@ -26,6 +26,55 @@ type Config struct {
 	// action. Their names vary per install, so the user picks them during setup.
 	DataLogDir string `json:"data_log_dir"`
 	AppLogDir  string `json:"app_log_dir"`
+
+	// Mode selects how Kafka is run: "local" (a Windows install driven via the
+	// bin\windows .bat scripts) or "docker" (a KRaft broker in a Docker
+	// container, driven via `docker compose` / `docker exec`).
+	Mode string `json:"mode"`
+	// DockerDir holds the generated docker-compose.yml (e.g. C:\kafka-docker).
+	DockerDir string `json:"docker_dir"`
+	// DockerImage is the Kafka image used in docker-compose.yml.
+	DockerImage string `json:"docker_image"`
+}
+
+// Run modes.
+const (
+	ModeLocal  = "local"
+	ModeDocker = "docker"
+)
+
+// Docker defaults.
+const (
+	DefaultDockerDir   = `C:\kafka-docker`
+	DefaultDockerImage = "apache/kafka:4.4.0"
+)
+
+// IsDocker reports whether Kafka is run through Docker.
+func (c *Config) IsDocker() bool { return c != nil && c.Mode == ModeDocker }
+
+// DockerDirOrDefault returns the configured docker folder or the default.
+func (c *Config) DockerDirOrDefault() string {
+	if strings.TrimSpace(c.DockerDir) == "" {
+		return DefaultDockerDir
+	}
+	return c.DockerDir
+}
+
+// DockerImageOrDefault returns the configured image or the default.
+func (c *Config) DockerImageOrDefault() string {
+	if strings.TrimSpace(c.DockerImage) == "" {
+		return DefaultDockerImage
+	}
+	return c.DockerImage
+}
+
+// Ready reports whether the configuration is usable: either Docker mode, or a
+// valid local Kafka installation.
+func (c *Config) Ready() bool {
+	if c.IsDocker() {
+		return true
+	}
+	return len(ValidateKafkaPath(c.KafkaPath)) == 0
 }
 
 // Default returns a Config populated with sensible defaults.
@@ -38,6 +87,9 @@ func Default() *Config {
 		AutoStartZK:     false,
 		AutoStartKafka:  false,
 		Theme:           "dark",
+		Mode:            ModeLocal,
+		DockerDir:       DefaultDockerDir,
+		DockerImage:     DefaultDockerImage,
 	}
 }
 

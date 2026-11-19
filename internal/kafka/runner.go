@@ -71,9 +71,44 @@ func (m *Manager) tool(name string) string {
 	return filepath.Join(m.binDir(), name)
 }
 
-// bootstrap returns the configured bootstrap server.
+// bootstrap returns the bootstrap server the CLI tools should use. In Docker
+// mode the tools run inside the container, where the broker listens on
+// localhost:9092 regardless of the host-side setting.
 func (m *Manager) bootstrap() string {
+	if m.Config().IsDocker() {
+		return dockerBootstrap
+	}
 	return m.Config().BootstrapServer
+}
+
+// IsDocker reports whether the manager is in Docker mode.
+func (m *Manager) IsDocker() bool { return m.Config().IsDocker() }
+
+// toolCmd builds the command that runs a Kafka CLI tool. tool is the Windows
+// .bat name (e.g. "kafka-topics.bat"); in Docker mode it is mapped to the
+// matching /opt/kafka/bin/*.sh script and run with `docker exec`. withStdin
+// adds `-i` so the tool can read stdin (needed by the console producer).
+func (m *Manager) toolCmd(ctx context.Context, tool string, withStdin bool, args ...string) *exec.Cmd {
+	var cmd *exec.Cmd
+	if m.IsDocker() {
+		cmd = exec.CommandContext(ctx, "docker", dockerExecArgs(tool, withStdin, args)...)
+	} else {
+		cmd = exec.CommandContext(ctx, m.tool(tool), args...)
+		cmd.Dir = m.Config().KafkaPath
+	}
+	cmd.SysProcAttr = hiddenWindow()
+	return cmd
+}
+
+// record adds a tool invocation to the command history. The display text is
+// the real command line for the active mode (a docker exec line in Docker
+// mode) while Tool/Args keep the mode-neutral form so re-runs work in either.
+func (m *Manager) record(tool string, args []string) {
+	display := formatCommand(tool, args)
+	if m.IsDocker() {
+		display = formatCommand("docker", dockerExecArgs(tool, false, args))
+	}
+	m.history.Add(CommandRecord{Display: display, Tool: tool, Args: args, When: time.Now()})
 }
 
 // CommandRecord is a single executed command for the history list.
@@ -87,13 +122,9 @@ type CommandRecord struct {
 // run executes a Kafka .bat tool with the given args, capturing combined
 // output. The command is recorded in history. A timeout guards against hangs.
 func (m *Manager) run(ctx context.Context, tool string, args ...string) (string, error) {
-	full := m.tool(tool)
-	display := formatCommand(tool, args)
-	m.history.Add(CommandRecord{Display: display, Tool: full, Args: args, When: time.Now()})
+	m.record(tool, args)
 
-	cmd := exec.CommandContext(ctx, full, args...)
-	cmd.Dir = m.Config().KafkaPath
-	cmd.SysProcAttr = hiddenWindow()
+	cmd := m.toolCmd(ctx, tool, false, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -116,7 +147,7 @@ func (m *Manager) runTimeout(tool string, args ...string) (string, error) {
 // server scripts are refused here (use the Services page to control those).
 func (m *Manager) RunRecorded(rec CommandRecord) (string, error) {
 	base := filepath.Base(rec.Tool)
-	if base == "zookeeper-server-start.bat" || base == "kafka-server-start.bat" {
+	if base == "zookeeper-server-start.bat" || base == "kafka-server-start.bat" || base == "docker" {
 		return "", fmt.Errorf("use the Services page to start %s", base)
 	}
 	if base == consumerTool {

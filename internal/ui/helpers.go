@@ -8,16 +8,17 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
 
 // toast shows a transient notification at the bottom of the window.
 func (u *AppUI) toast(msg string) {
-	bg := canvas.NewRectangle(color.NRGBA{R: 0x2e, G: 0xb8, B: 0xa6, A: 0xff})
-	bg.CornerRadius = 6
-	label := widget.NewLabelWithStyle(msg, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	content := container.NewStack(bg, container.NewPadded(label))
+	bg := canvas.NewRectangle(withAlpha(pal.primary, 0xf2))
+	bg.CornerRadius = 12
+	label := canvas.NewText(msg, color.White)
+	label.TextStyle = fyne.TextStyle{Bold: true}
+	content := container.NewStack(bg, container.New(layout.NewCustomPaddedLayout(10, 10, 18, 18), label))
 
 	pop := widget.NewPopUp(content, u.win.Canvas())
 	cw := u.win.Canvas().Size()
@@ -46,40 +47,39 @@ func (u *AppUI) notify(title, body string) {
 // statusDot returns a colored circle reflecting a running/stopped/transition
 // state, plus a label.
 func statusDot(running, transitioning bool) *canvas.Circle {
-	c := canvas.NewCircle(color.NRGBA{R: 0xe0, G: 0x4f, B: 0x4f, A: 0xff}) // red
+	c := canvas.NewCircle(red)
 	if transitioning {
-		c.FillColor = color.NRGBA{R: 0xe6, G: 0xb0, B: 0x3a, A: 0xff} // yellow
+		c.FillColor = yellow
 	} else if running {
-		c.FillColor = color.NRGBA{R: 0x3f, G: 0xb9, B: 0x50, A: 0xff} // green
+		c.FillColor = green
 	}
 	c.Resize(fyne.NewSize(12, 12))
 	return c
 }
 
-// card wraps content in a rounded "card" with a title.
+// card wraps content in a translucent glass panel with an optional title.
 func card(title string, content fyne.CanvasObject) fyne.CanvasObject {
-	bg := canvas.NewRectangle(color.NRGBA{R: 0x1a, G: 0x20, B: 0x29, A: 0xff})
-	bg.CornerRadius = 10
-	bg.StrokeColor = color.NRGBA{R: 0x2a, G: 0x32, B: 0x3d, A: 0xff}
-	bg.StrokeWidth = 1
-
 	var inner fyne.CanvasObject = content
 	if title != "" {
-		head := widget.NewLabelWithStyle(title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-		inner = container.NewBorder(head, nil, nil, nil, content)
+		head := themedText(title, false)
+		head.TextStyle = fyne.TextStyle{Bold: true}
+		head.TextSize = 14
+		inner = container.NewBorder(
+			container.New(layout.NewCustomPaddedLayout(2, 8, 4, 0), head), nil, nil, nil, content)
 	}
-	return container.NewStack(bg, container.NewPadded(inner))
+	return glassPanel(inner)
 }
 
-// sectionTitle returns a large bold heading with an icon.
+// sectionTitle returns a large bold page heading led by an accent icon tile.
 func sectionTitle(text string, icon fyne.Resource) fyne.CanvasObject {
-	t := canvas.NewText(text, theme.DefaultTheme().Color(theme.ColorNameForeground, theme.VariantDark))
+	t := themedText(text, false)
 	t.TextStyle = fyne.TextStyle{Bold: true}
-	t.TextSize = 20
+	t.TextSize = 22
 	if icon != nil {
-		return container.NewHBox(widget.NewIcon(icon), t)
+		tile := newIconTile(icon, colorBlue, 34)
+		return container.NewHBox(vCentered(tile.root), vCentered(t))
 	}
-	return container.NewHBox(t)
+	return container.NewHBox(vCentered(t))
 }
 
 // confirm shows a yes/no confirmation dialog and calls onYes if confirmed.

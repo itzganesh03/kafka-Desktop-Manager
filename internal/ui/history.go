@@ -53,7 +53,7 @@ func (u *AppUI) buildHistory() fyne.CanvasObject {
 	)
 
 	reload()
-	return container.NewBorder(header, nil, nil, nil, list)
+	return container.NewBorder(header, nil, nil, nil, card("", list))
 }
 
 // rerun re-executes a recorded command (admin tools only; services are skipped).

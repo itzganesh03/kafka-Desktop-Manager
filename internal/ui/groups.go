@@ -65,7 +65,7 @@ func (u *AppUI) buildGroups() fyne.CanvasObject {
 	)
 
 	left := card("Groups", list)
-	split := container.NewHSplit(left, container.NewPadded(detail))
+	split := container.NewHSplit(left, card("", detail))
 	split.SetOffset(0.28)
 
 	page := container.NewBorder(header, nil, nil, nil, split)

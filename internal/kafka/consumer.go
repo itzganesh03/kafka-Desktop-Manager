@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -20,6 +21,7 @@ type Consumer struct {
 	cmd     *exec.Cmd
 	running bool
 	paused  bool
+	pidFile string // Docker mode: in-container PID file of the consumer
 
 	onMessage func(string)
 	onStop    func()
@@ -58,16 +60,18 @@ func (c *Consumer) Start(fromBeginning bool) error {
 	if fromBeginning {
 		args = append(args, "--from-beginning")
 	}
-	c.mgr.history.Add(CommandRecord{
-		Display: formatCommand(consumerTool, args),
-		Tool:    c.mgr.tool(consumerTool),
-		Args:    args,
-		When:    time.Now(),
-	})
+	c.mgr.record(consumerTool, args)
 
-	cmd := exec.Command(c.mgr.tool(consumerTool), args...)
-	cmd.Dir = c.mgr.Config().KafkaPath
-	cmd.SysProcAttr = hiddenWindow()
+	var cmd *exec.Cmd
+	pidFile := ""
+	if c.mgr.IsDocker() {
+		// Killing the `docker exec` client does not stop the process inside the
+		// container, so record the in-container PID to kill it on Stop.
+		pidFile = fmt.Sprintf("/tmp/kdm-consumer-%d.pid", time.Now().UnixNano())
+		cmd = dockerTrackedExec(consumerTool, pidFile, args)
+	} else {
+		cmd = c.mgr.toolCmd(context.Background(), consumerTool, false, args...)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -85,6 +89,7 @@ func (c *Consumer) Start(fromBeginning bool) error {
 
 	c.mu.Lock()
 	c.cmd = cmd
+	c.pidFile = pidFile
 	c.running = true
 	c.paused = false
 	c.mu.Unlock()
@@ -137,9 +142,13 @@ func (c *Consumer) Stop() error {
 	c.mu.Lock()
 	cmd := c.cmd
 	running := c.running
+	pidFile := c.pidFile
 	c.mu.Unlock()
 	if !running || cmd == nil || cmd.Process == nil {
 		return nil
+	}
+	if pidFile != "" {
+		dockerKillTracked(pidFile)
 	}
 	return killTree(cmd.Process.Pid)
 }

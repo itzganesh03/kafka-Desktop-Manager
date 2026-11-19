@@ -28,8 +28,8 @@ func showSplash(a fyne.App, onDone func()) {
 	stop := make(chan struct{})
 
 	// Background.
-	bg := canvas.NewRectangle(color.NRGBA{R: 0x0f, G: 0x14, B: 0x1a, A: 0xff})
-	accentBar := canvas.NewRectangle(accentTeal)
+	bg := glassBackdrop()
+	accentBar := canvas.NewRectangle(pal.primary)
 	accentBar.SetMinSize(fyne.NewSize(0, 4))
 
 	// Pulsing logo.
@@ -51,25 +51,25 @@ func showSplash(a fyne.App, onDone func()) {
 	logoAnim.Start()
 
 	// Title (fades in).
-	title := canvas.NewText("One Way Kafka Manager", color.NRGBA{R: 0x2e, G: 0xb8, B: 0xa6, A: 0x00})
+	title := canvas.NewText("One Way Kafka Manager", withAlpha(pal.text, 0))
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	title.TextSize = 26
 	title.Alignment = fyne.TextAlignCenter
 	titleAnim := canvas.NewColorRGBAAnimation(
-		color.NRGBA{R: 0x2e, G: 0xb8, B: 0xa6, A: 0x00},
-		color.NRGBA{R: 0x36, G: 0xd0, B: 0xbb, A: 0xff},
+		withAlpha(pal.text, 0x00),
+		pal.text,
 		900*time.Millisecond, func(c color.Color) { title.Color = c; title.Refresh() })
 	titleAnim.Curve = fyne.AnimationEaseIn
 	titleAnim.Start()
 
-	subtitle := canvas.NewText("Initializing workspace…", color.NRGBA{R: 0x8a, G: 0x92, B: 0x9c, A: 0xff})
+	subtitle := canvas.NewText("Initializing workspace…", pal.muted)
 	subtitle.TextSize = 13
 	subtitle.Alignment = fyne.TextAlignCenter
 
 	// Chasing "one-way flow" dots.
 	const nDots = 5
-	dim := color.NRGBA{R: 0x2e, G: 0xb8, B: 0xa6, A: 0x40}
-	bright := color.NRGBA{R: 0x4f, G: 0xe6, B: 0xd2, A: 0xff}
+	dim := withAlpha(pal.primary, 0x40)
+	bright := accent(colorBlue)
 	dots := make([]*canvas.Circle, nDots)
 	dotObjs := make([]fyne.CanvasObject, nDots)
 	for i := range dots {

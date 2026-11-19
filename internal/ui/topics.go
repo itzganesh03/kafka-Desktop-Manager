@@ -128,7 +128,7 @@ func (u *AppUI) buildTopics() fyne.CanvasObject {
 		widget.NewSeparator(),
 	)
 
-	page := container.NewBorder(header, nil, nil, nil, table)
+	page := container.NewBorder(header, nil, nil, nil, card("", table))
 	reload()
 	return page
 }

@@ -120,19 +120,18 @@ func (u *AppUI) buildProducer() fyne.CanvasObject {
 
 	controls := container.NewHBox(sendBtn, prettyBtn, minifyBtn, clearBtn)
 	top := container.NewVBox(
-		sectionTitle("Producer", theme.MailSendIcon()),
 		container.NewBorder(nil, nil, widget.NewLabel("Topic:"), widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() { loadTopics(true) }), topicSelect),
 		singleMsg,
 		controls,
 		widget.NewSeparator(),
 	)
 
-	left := container.NewBorder(top, nil, nil, nil, container.NewScroll(editor))
+	left := card("", container.NewBorder(top, nil, nil, nil, container.NewScroll(editor)))
 	right := card("History", container.NewBorder(nil, nil, nil, nil, historyList))
 
 	split := container.NewHSplit(left, right)
 	split.SetOffset(0.7)
-	return split
+	return container.NewBorder(sectionTitle("Producer", theme.MailSendIcon()), nil, nil, nil, split)
 }
 
 func truncate(s string, n int) string {

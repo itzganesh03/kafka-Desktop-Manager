@@ -7,6 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -22,19 +23,32 @@ const (
 
 // buildServices builds the service control + live logs page.
 func (u *AppUI) buildServices() fyne.CanvasObject {
-	zkPanel, zkFlush := u.servicePanel(u.mgr.ZooKeeper)
+	docker := u.cfg.IsDocker()
 	brokerPanel, brokerFlush := u.servicePanel(u.mgr.Broker)
+	var body fyne.CanvasObject = brokerPanel
+	zkFlush := func() {}
+	if !docker {
+		var zkPanel fyne.CanvasObject
+		zkPanel, zkFlush = u.servicePanel(u.mgr.ZooKeeper)
+		body = container.NewGridWithColumns(2, zkPanel, brokerPanel)
+	}
 
 	metaBtn := widget.NewButtonWithIcon("Metadata Delete", theme.DeleteIcon(), func() {
 		u.runMetadataDelete()
 	})
 	metaBtn.Importance = widget.DangerImportance
 	hint := widget.NewLabel("Broker won't start? Stop services and clear Kafka logs/metadata:")
+	title := "Services & Logs"
+	if docker {
+		metaBtn.SetText("Reset Docker Data")
+		hint.SetText("Docker mode (KRaft, no ZooKeeper). Broken broker? Remove the container + data volume:")
+		title = "Services & Logs · Docker"
+	}
 	headerRow := container.NewBorder(nil, nil,
-		sectionTitle("Services & Logs", theme.MediaPlayIcon()),
+		sectionTitle(title, theme.MediaPlayIcon()),
 		container.NewHBox(hint, metaBtn))
-	header := container.NewVBox(headerRow, widget.NewSeparator())
-	body := container.NewGridWithColumns(2, zkPanel, brokerPanel)
+	header := container.New(layout.NewCustomPaddedLayout(0, 8, 0, 0), headerRow)
+	hint.Importance = widget.LowImportance
 	page := container.NewBorder(header, nil, nil, nil, body)
 
 	// Throttled flush: logs are appended to a buffer by the service; we re-render
@@ -53,11 +67,11 @@ func (u *AppUI) buildServices() fyne.CanvasObject {
 // servicePanel builds the control + log console for a single service and
 // returns the panel plus a flush function that re-renders the console.
 func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
-	dot := statusDot(false, false)
-	stateLbl := widget.NewLabel(stateText(svc.State()))
+	pill := newStatusPill(dashStateText(svc.State()))
 
 	logView := widget.NewMultiLineEntry()
 	logView.Wrapping = fyne.TextWrapOff
+	logView.TextStyle = fyne.TextStyle{Monospace: true}
 	logView.SetMinRowsVisible(10)
 
 	var (
@@ -174,9 +188,7 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 			}
 		}
 		fyne.Do(func() {
-			dot.FillColor = stateColor(st)
-			dot.Refresh()
-			stateLbl.SetText(stateText(st))
+			pill.set(dashStateText(st), stateColor(st))
 			running := st == kafka.StateRunning || st == kafka.StateStarting
 			if running {
 				startBtn.Disable()
@@ -193,11 +205,18 @@ func (u *AppUI) servicePanel(svc *kafka.Service) (fyne.CanvasObject, func()) {
 	applyState(svc.State())
 	svc.SubscribeState(applyState)
 
+	startBtn.Importance = widget.HighImportance
 	controls := container.NewHBox(startBtn, stopBtn, restartBtn, clearBtn, exportBtn, autoCheck)
-	head := container.NewHBox(container.NewCenter(dot),
-		widget.NewLabelWithStyle(svc.Name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), stateLbl)
+	title := svc.Name
+	if u.cfg.IsDocker() {
+		title = svc.Name + " (Docker container \"" + kafka.DockerContainer + "\")"
+	}
+	name := themedText(title, false)
+	name.TextStyle = fyne.TextStyle{Bold: true}
+	name.TextSize = 15
+	head := container.NewHBox(vCentered(name), vCentered(pill.root))
 
-	top := container.NewVBox(head, controls, widget.NewSeparator())
+	top := container.NewVBox(container.New(layout.NewCustomPaddedLayout(2, 4, 4, 0), head), controls)
 	console := container.NewScroll(logView)
 	return card("", container.NewBorder(top, nil, nil, nil, console)), flush
 }

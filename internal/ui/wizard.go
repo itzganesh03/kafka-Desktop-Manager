@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"kafkadesktop/internal/config"
+	"kafkadesktop/internal/kafka"
 )
 
 // buildWizard constructs the first-run setup wizard.
@@ -107,6 +108,27 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 	})
 	finish.Importance = widget.HighImportance
 
+	// No local Kafka? Offer Docker when it is installed and running.
+	dockerBtn := widget.NewButtonWithIcon("Install Kafka via Docker instead", theme.DownloadIcon(), nil)
+	dockerBtn.Disable()
+	dockerLbl := widget.NewLabel("Checking for Docker…")
+	dockerLbl.Importance = widget.LowImportance
+	dockerBtn.OnTapped = func() {
+		u.showDockerInstall(func() {
+			u.toast("Setup complete!")
+			u.win.SetContent(u.buildShell())
+		})
+	}
+	go func() {
+		di := kafka.DetectDocker()
+		fyne.Do(func() {
+			dockerLbl.SetText(di.Summary())
+			if di.Usable() {
+				dockerBtn.Enable()
+			}
+		})
+	}()
+
 	form := widget.NewForm(
 		widget.NewFormItem("Kafka Directory", container.NewBorder(nil, nil, nil, browse, pathEntry)),
 		widget.NewFormItem("Bootstrap Server", bootstrap),
@@ -130,9 +152,12 @@ func (u *AppUI) buildWizard() fyne.CanvasObject {
 		form,
 		container.NewHBox(validateBtn, finish),
 		widget.NewSeparator(),
+		container.NewHBox(dockerBtn, dockerLbl),
+		widget.NewSeparator(),
 		status,
 		hint,
 	)
 
-	return container.NewPadded(container.NewVScroll(body))
+	return container.NewStack(glassBackdrop(),
+		container.New(padAll(24), card("", container.NewVScroll(body))))
 }

@@ -23,9 +23,9 @@ import (
 const (
 	maxConsumerBuffer    = 5000   // messages retained in memory
 	maxConsumerShown     = 250    // most-recent messages considered for display
-	maxDisplayLineLen    = 2000   // per-message display cap (chars)
-	maxTotalDisplayChars = 120000 // total rendered text cap (chars)
-	maxPrettyLen         = 20000  // only pretty-print JSON below this size
+	maxDisplayLineLen    = 100000 // per-message display cap (chars) — big enough for full CDC payloads
+	maxTotalDisplayChars = 300000 // total rendered text cap (chars)
+	maxPrettyLen         = 100000 // pretty-print JSON up to this size
 )
 
 // buildConsumer builds the consumer page.
@@ -45,12 +45,38 @@ func (u *AppUI) buildConsumer() fyne.CanvasObject {
 	if u.cfg.DefaultTopic != "" {
 		topicSelect.SetSelected(u.cfg.DefaultTopic)
 	}
-	go func() {
-		names, err := u.mgr.CachedTopics()
-		if err == nil {
-			fyne.Do(func() { topicSelect.Options = names; topicSelect.Refresh() })
+	// loadTopics fills the dropdown. force bypasses the 30s topic cache so
+	// topics created at runtime (elsewhere or from the CLI) show up at once.
+	var refreshBtn *widget.Button
+	loadTopics := func(force bool) {
+		if force {
+			refreshBtn.Disable()
 		}
-	}()
+		go func() {
+			if force {
+				u.mgr.InvalidateTopicCache()
+			}
+			names, err := u.mgr.CachedTopics()
+			fyne.Do(func() {
+				if force {
+					refreshBtn.Enable()
+				}
+				if err != nil {
+					if force {
+						u.errorDialog(err)
+					}
+					return
+				}
+				topicSelect.Options = names
+				topicSelect.Refresh()
+				if force {
+					u.toast("Topics refreshed — " + plural(len(names), "topic"))
+				}
+			})
+		}()
+	}
+	refreshBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() { loadTopics(true) })
+	loadTopics(false)
 
 	fromBeginning := widget.NewCheck("From beginning", nil)
 	search := widget.NewEntry()
@@ -229,7 +255,8 @@ func (u *AppUI) buildConsumer() fyne.CanvasObject {
 		}
 	}
 
-	topRow := container.NewBorder(nil, nil, widget.NewLabel("Topic:"), fromBeginning, topicSelect)
+	topRow := container.NewBorder(nil, nil, widget.NewLabel("Topic:"),
+		container.NewHBox(refreshBtn, fromBeginning), topicSelect)
 	controls := container.NewHBox(startBtn, stopBtn, pauseBtn, resumeBtn, autoCheck, prettyCheck, clearBtn, copyBtn, exportBtn)
 	statusRow := container.NewHBox(statusLbl, widget.NewSeparator(), countLbl)
 
@@ -241,11 +268,12 @@ func (u *AppUI) buildConsumer() fyne.CanvasObject {
 		search,
 		widget.NewSeparator(),
 	)
-	page := container.NewBorder(header, nil, nil, nil, container.NewScroll(output))
+	page := container.NewBorder(header, nil, nil, nil, card("", container.NewScroll(output)))
 
 	// Throttled render + count update (~4 fps) keeps the UI smooth at high
 	// message rates instead of rebuilding the text on every record.
 	u.onShow["consumer"] = func() {
+		loadTopics(false) // cheap (cached); picks up new topics when revisiting the page
 		u.startAutoRefresh("consumer", page, 250*time.Millisecond, func() {
 			mu.Lock()
 			n := total

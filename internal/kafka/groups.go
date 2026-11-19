@@ -77,40 +77,90 @@ func (m *Manager) GroupState(group string) (state string, members int) {
 	return state, members
 }
 
-// parseGroupDescribe parses the columnar --describe output.
+// headerCol records a column name and its start offset within the header line.
+type headerCol struct {
+	name       string
+	start, end int
+}
+
+// parseHeaderColumns finds each column name and its character span. Kafka pads
+// every column (header included) to a fixed width, so a value's characters
+// always sit within its header column's [start,end) span — this is robust even
+// when a long GROUP name leaves only a single space before the next column.
+func parseHeaderColumns(header string) []headerCol {
+	var cols []headerCol
+	i, n := 0, len(header)
+	for i < n {
+		for i < n && header[i] == ' ' {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		start := i
+		for i < n && header[i] != ' ' {
+			i++
+		}
+		cols = append(cols, headerCol{name: header[start:i], start: start})
+	}
+	for idx := range cols {
+		if idx+1 < len(cols) {
+			cols[idx].end = cols[idx+1].start
+		} else {
+			cols[idx].end = 1 << 30
+		}
+	}
+	return cols
+}
+
+// value extracts a column's text from a data line by header offset.
+func (c headerCol) value(line string) string {
+	if c.start >= len(line) {
+		return ""
+	}
+	end := c.end
+	if end > len(line) {
+		end = len(line)
+	}
+	return strings.TrimSpace(line[c.start:end])
+}
+
+// parseGroupDescribe parses the columnar --describe output using header offsets.
 func parseGroupDescribe(out string) []GroupOffset {
 	var rows []GroupOffset
-	var header []string
+	var cols []headerCol
 	for _, line := range strings.Split(out, "\n") {
-		raw := strings.TrimSpace(line)
-		if raw == "" {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := splitMultiSpace(raw)
-		if strings.HasPrefix(raw, "GROUP") {
-			header = fields
+		if cols == nil {
+			if strings.HasPrefix(strings.TrimSpace(line), "GROUP") && strings.Contains(line, "TOPIC") {
+				cols = parseHeaderColumns(line)
+			}
 			continue
 		}
-		col := func(name string) string {
-			for i, h := range header {
-				if strings.EqualFold(h, name) && i < len(fields) {
-					return strings.TrimSpace(fields[i])
+		get := func(name string) string {
+			for _, c := range cols {
+				if strings.EqualFold(c.name, name) {
+					return c.value(line)
 				}
 			}
 			return ""
 		}
-		row := GroupOffset{
-			Topic:         col("TOPIC"),
-			CurrentOffset: col("CURRENT-OFFSET"),
-			LogEndOffset:  col("LOG-END-OFFSET"),
-			ConsumerID:    col("CONSUMER-ID"),
-			Host:          col("HOST"),
-		}
-		row.Partition, _ = strconv.Atoi(col("PARTITION"))
-		row.Lag, _ = strconv.ParseInt(col("LAG"), 10, 64)
-		if row.Topic == "" {
+		topic := get("TOPIC")
+		if topic == "" || topic == "-" {
 			continue
 		}
+		row := GroupOffset{
+			Topic:         topic,
+			CurrentOffset: get("CURRENT-OFFSET"),
+			LogEndOffset:  get("LOG-END-OFFSET"),
+			ConsumerID:    get("CONSUMER-ID"),
+			Host:          get("HOST"),
+		}
+		row.Partition, _ = strconv.Atoi(get("PARTITION"))
+		row.Lag, _ = strconv.ParseInt(get("LAG"), 10, 64)
 		rows = append(rows, row)
 	}
 	return rows

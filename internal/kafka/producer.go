@@ -2,8 +2,8 @@ package kafka
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -21,16 +21,9 @@ func (m *Manager) SendMessages(topic string, messages []string) (string, error) 
 	}
 
 	args := []string{"--bootstrap-server", m.bootstrap(), "--topic", topic}
-	m.history.Add(CommandRecord{
-		Display: formatCommand(producerTool, args),
-		Tool:    m.tool(producerTool),
-		Args:    args,
-		When:    time.Now(),
-	})
+	m.record(producerTool, args)
 
-	cmd := exec.Command(m.tool(producerTool), args...)
-	cmd.Dir = m.Config().KafkaPath
-	cmd.SysProcAttr = hiddenWindow()
+	cmd := m.toolCmd(context.Background(), producerTool, true, args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
