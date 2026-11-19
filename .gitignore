@@ -1,5 +1,5 @@
 # Build output
-/kafka-desktop.exe
+# /kafka-desktop.exe
 # *.exe
 *.syso
 .claude/
